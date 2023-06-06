@@ -1,8 +1,5 @@
----
-Language: Cpp
-BasedOnStyle: Google
-ColumnLimit: 120
-IncludeBlocks: Preserve
-DerivePointerAlignment: false
+BasedOnStyle: google
+ColumnLimit: 100
 PointerAlignment: Left
----
+DerivePointerAlignment: false
+IncludeBlocks: Preserve
