@@ -27,12 +27,11 @@ namespace detail {
 
 // Generates an exception w/ a formatted string.
 template <typename... Ts>
-void RaiseAssert(const char* const condition, const char* const file, const int line,
-                 const char* const reason_fmt = nullptr, Ts&&... args) {
+void RaiseAssert(std::string_view condition, std::string_view file, const int line, Ts&&... args) {
   std::string err = fmt::format("Assertion failed: {}\nFile: {}\nLine: {}", condition, file, line);
-  if (reason_fmt) {
+  if constexpr (sizeof...(args) > 0) {
     err += "\nMessage: ";
-    fmt::format_to(std::back_inserter(err), reason_fmt, std::forward<Ts>(args)...);
+    fmt::format_to(std::back_inserter(err), std::forward<Ts>(args)...);
   }
   spdlog::error("Encountered assertion: {}", err);
   throw AssertionError(std::move(err));
@@ -40,17 +39,17 @@ void RaiseAssert(const char* const condition, const char* const file, const int 
 
 // Version that prints args A & B as well. For binary comparisons.
 template <typename A, typename B, typename... Ts>
-void RaiseAssertBinaryOp(const char* const condition, const char* const file, const int line,
-                         const char* const a_name, A&& a, const char* const b_name, B&& b,
-                         const char* const reason_fmt = nullptr, Ts&&... args) {
+void RaiseAssertBinaryOp(std::string_view condition, std::string_view file, const int line,
+                         std::string_view a_name, A&& a, std::string_view b_name, B&& b,
+                         Ts&&... args) {
   std::string err = fmt::format(
       "Assertion failed: {}\n"
       "Operands are: {} = {}, {} = {}\n"
       "File: {}\nLine: {}",
       condition, a_name, std::forward<A>(a), b_name, std::forward<B>(b), file, line);
-  if (reason_fmt) {
+  if constexpr (sizeof...(args) > 0) {
     err += "\nMessage: ";
-    fmt::format_to(std::back_inserter(err), reason_fmt, std::forward<Ts>(args)...);
+    fmt::format_to(std::back_inserter(err), std::forward<Ts>(args)...);
   }
   spdlog::error("Encountered assertion: {}", err);
   throw AssertionError(std::move(err));

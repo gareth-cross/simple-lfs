@@ -46,7 +46,7 @@ function(add_aws)
       OFF
       CACHE BOOL "" FORCE)
   set(BUILD_ONLY
-      "s3;core"
+      "s3;core;transfer"
       CACHE STRING "" FORCE)
   add_subdirectory(aws-sdk-cpp)
   target_compile_options(aws-cpp-sdk-core PRIVATE /wd4267)

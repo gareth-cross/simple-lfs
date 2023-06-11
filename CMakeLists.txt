@@ -15,11 +15,15 @@ if(MSVC AND ${OVERRIDE_ARCH_ON_WIN32})
       CACHE STRING "" FORCE)
 endif()
 
+# Find OpenSSL
+find_package(OpenSSL REQUIRED)
+
 # Add third party
 add_subdirectory(dependencies)
 
 # Main project library
-add_executable(${PROJECT_NAME} source/main.cc source/structs.cc)
+add_executable(${PROJECT_NAME} source/main.cc source/structs.cc
+                               source/hashing.cc source/server.cc)
 
 # Link to dependencies
 add_dependencies(
@@ -29,7 +33,8 @@ add_dependencies(
   httplib
   nlohmann_json
   aws-cpp-sdk-s3
-  aws-cpp-sdk-core)
+  aws-cpp-sdk-core
+  aws-cpp-sdk-transfer)
 target_link_libraries(
   ${PROJECT_NAME}
   fmt-header-only
@@ -37,7 +42,10 @@ target_link_libraries(
   httplib
   nlohmann_json
   aws-cpp-sdk-s3
-  aws-cpp-sdk-core)
+  aws-cpp-sdk-core
+  aws-cpp-sdk-transfer
+  OpenSSL::Crypto
+  Rpcrt4)
 
 # Turn on C++17
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
