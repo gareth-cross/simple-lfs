@@ -37,6 +37,24 @@ function(add_json)
 endfunction()
 add_json()
 
+# Add toml++
+function(add_tomlplusplus)
+  add_subdirectory(tomlplusplus)
+endfunction()
+add_tomlplusplus()
+
+# Add expected
+function(add_tl_expected)
+  add_subdirectory(tl_expected)
+endfunction()
+add_tl_expected()
+
+# Add CLI11
+function(add_cli11)
+  add_subdirectory(cli11)
+endfunction()
+add_cli11()
+
 # Add AWS
 function(add_aws)
   set(BUILD_SHARED_LIBS
