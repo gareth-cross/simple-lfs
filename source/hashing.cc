@@ -26,7 +26,8 @@ Sha256 Hasher::GetHash() const {
   unsigned int digest_size{0};
   const int read_result = EVP_DigestFinal_ex(context_.get(), &digest[0], &digest_size);
   ASSERT_EQUAL(1, read_result, "Failed reading final digest.");
-  ASSERT_EQUAL(digest.size(), digest_size);
+  ASSERT_EQUAL(digest.size(), digest_size, "Digest is the wrong size (should be {} bytes).",
+               digest.size());
   return digest;
 }
 
@@ -41,7 +42,8 @@ std::string Base64FromSha256(const Sha256& sha) {
   std::array<uint8_t, expected_size> encoded{};
   const std::size_t sha_size = sha.size();
   const int encoded_len = EVP_EncodeBlock(encoded.data(), sha.data(), static_cast<int>(sha_size));
-  ASSERT_EQUAL(expected_size, static_cast<std::size_t>(encoded_len) + 1);
+  ASSERT_EQUAL(expected_size, static_cast<std::size_t>(encoded_len) + 1,
+               "Wrong size for base-64 encoded sha-256.");
   return std::string{encoded.begin(), encoded.end()};
 }
 

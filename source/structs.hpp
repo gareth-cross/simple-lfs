@@ -20,6 +20,7 @@ constexpr std::string_view sha256 = "sha256";
 // Error codes we can return in `object_error_t`.
 enum class error_code {
   success = 200,
+  object_does_not_exist = 404,
   validation_error = 422,
   internal_error = 500,
 };
@@ -31,23 +32,32 @@ enum operation {
   download,
 };
 
+// Pair together an OID (sha-256 hash) and the size in bytes of the object.
 struct object_t {
   std::string oid;
   std::size_t size{0};
 };
 
+// Stores a git Refspec: https://git-scm.com/book/en/v2/Git-Internals-The-Refspec
 struct ref_t {
   std::string name;
 };
 
+// Struct the client sends when making a PUT operation on the /batch API.
 struct objects_batch_t {
+  // Either `upload` or `download`.
   operation operation{operation::invalid};
+  // Objects the client is requesting.
   std::vector<object_t> objects;
+  // Types of transfer that the client can support. We ignore this and assume basic.
   std::vector<std::string> transfers;
+  // Optional object describing the server ref that the objects belong to.
   ref_t ref;
+  // Only SHA256 is supported.
   std::string hash_algo{sha256};
 };
 
+// Specify a URL the client should hit, w/ corresponding HTTP headers.
 struct action_url_t {
   std::string href;
   std::map<std::string, std::string> header;
@@ -62,6 +72,7 @@ struct action_url_t {
       : href(std::move(href)), header(std::move(header)) {}
 };
 
+// Return a dict of actions the client can perform for a specific object.
 struct object_actions_t {
   std::string oid;
   std::size_t size{0};
@@ -71,9 +82,11 @@ struct object_actions_t {
 
   explicit object_actions_t(const object_t& object) : oid(object.oid), size(object.size) {}
 
-  object_actions_t(const object_t& object,
-                   std::initializer_list<std::pair<const std::string, action_url_t>> actions)
-      : oid(object.oid), size(object.size), actions(actions) {}
+  // Construct w/ a single action URL (the most common case).
+  object_actions_t(const object_t& object, std::string_view action, action_url_t action_url)
+      : object_actions_t(object) {
+    actions.emplace(action, std::move(action_url));
+  }
 };
 
 // Pair together an error code w/ a message.
@@ -94,6 +107,7 @@ struct error_t {
       : code(static_cast<int>(code)), message(std::move(message)) {}
 };
 
+// Indicate an error occurred processing a request for a specific object.
 struct object_error_t {
   std::string oid;
   std::size_t size{0};
@@ -104,9 +118,13 @@ struct object_error_t {
       : oid(obj.oid), size(obj.size), error(std::move(err)) {}
 };
 
+// Top level response object for the batch API.
 struct response_t {
+  // We only support `basic` transfer.
   std::string transfer{"basic"};
+  // List of either `object_actions_t` or `object_error_t`.
   std::vector<std::variant<std::monostate, object_actions_t, object_error_t>> objects;
+  // The only hash we support is sha256.
   std::string hash_algo{sha256};
 };
 
@@ -122,16 +140,6 @@ struct error_response_t {
   explicit error_response_t(std::string_view fmt, Ts&&... args)
       : message(fmt::format(fmt, std::forward<Ts>(args)...)) {}
 };
-
-// Create a `response_t` object that indicates an error.
-// template <typename... Ts>
-// response_t CreateErrorResponse(const object_t& obj, error_code code, std::string_view fmt,
-//                               Ts&&... args) {
-//  response_t response{};
-//  error_t err{code, fmt, std::forward<Ts>(args)...};
-//  response.objects.emplace_back(object_error_t{obj.oid, obj.size, std::move(err)});
-//  return response;
-//}
 
 // Decode `objects_batch_t` from json.
 objects_batch_t DecodeObjectBatch(const std::string_view& str);

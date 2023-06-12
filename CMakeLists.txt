@@ -22,8 +22,9 @@ find_package(OpenSSL REQUIRED)
 add_subdirectory(dependencies)
 
 # Main project library
-add_executable(${PROJECT_NAME} source/main.cc source/structs.cc
-                               source/hashing.cc source/server.cc)
+add_executable(
+  ${PROJECT_NAME} source/main.cc source/structs.cc source/hashing.cc
+                  source/server.cc source/uuid.cc source/configuration.cc)
 
 # Link to dependencies
 add_dependencies(
@@ -32,6 +33,9 @@ add_dependencies(
   spdlog_header_only
   httplib
   nlohmann_json
+  tomlplusplus::tomlplusplus
+  tl::expected
+  CLI11::CLI11
   aws-cpp-sdk-s3
   aws-cpp-sdk-core
   aws-cpp-sdk-transfer)
@@ -41,11 +45,18 @@ target_link_libraries(
   spdlog_header_only
   httplib
   nlohmann_json
+  tomlplusplus::tomlplusplus
+  tl::expected
+  CLI11::CLI11
+  OpenSSL::Crypto
   aws-cpp-sdk-s3
   aws-cpp-sdk-core
-  aws-cpp-sdk-transfer
-  OpenSSL::Crypto
-  Rpcrt4)
+  aws-cpp-sdk-transfer)
+
+if(WIN32)
+  # for UUID functionality on windows:
+  target_link_libraries(${PROJECT_NAME} Rpcrt4)
+endif()
 
 # Turn on C++17
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)

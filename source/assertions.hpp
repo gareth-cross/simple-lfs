@@ -6,7 +6,7 @@
 #pragma warning(disable : 4583)
 #pragma warning(disable : 4582)
 #endif  // _MSC_VER
-#include <fmt/ostream.h>
+#include <fmt/core.h>
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif  // _MSC_VER
@@ -30,7 +30,7 @@ template <typename... Ts>
 void RaiseAssert(std::string_view condition, std::string_view file, const int line, Ts&&... args) {
   std::string err = fmt::format("Assertion failed: {}\nFile: {}\nLine: {}", condition, file, line);
   if constexpr (sizeof...(args) > 0) {
-    err += "\nMessage: ";
+    err += "\nContext: ";
     fmt::format_to(std::back_inserter(err), std::forward<Ts>(args)...);
   }
   spdlog::error("Encountered assertion: {}", err);
@@ -48,7 +48,7 @@ void RaiseAssertBinaryOp(std::string_view condition, std::string_view file, cons
       "File: {}\nLine: {}",
       condition, a_name, std::forward<A>(a), b_name, std::forward<B>(b), file, line);
   if constexpr (sizeof...(args) > 0) {
-    err += "\nMessage: ";
+    err += "\nContext: ";
     fmt::format_to(std::back_inserter(err), std::forward<Ts>(args)...);
   }
   spdlog::error("Encountered assertion: {}", err);

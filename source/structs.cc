@@ -1,6 +1,5 @@
 #include "structs.hpp"
 
-#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -45,22 +44,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(error_response_t, message, documentation_url)
 
 objects_batch_t DecodeObjectBatch(const std::string_view& str) {
   json j = json::parse(str);
-  spdlog::debug("Received object match: {}", j.dump(2));
   return j.get<objects_batch_t>();
 }
 
 std::string EncodeResponse(const response_t& response) {
   json j = response;
-  std::string str = j.dump(2);
-  spdlog::debug("Created response: {}", str);
-  return str;
+  return j.dump(2);
 }
 
 std::string EncodeResponse(const error_response_t& response) {
   json j = response;
-  std::string str = j.dump(2);
-  spdlog::debug("Created error response: {}", str);
-  return str;
+  return j.dump(2);
 }
 
 }  // namespace lfs
