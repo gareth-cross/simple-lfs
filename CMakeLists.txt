@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.17)
 project(
   simplelfs
   VERSION 0.1
-  DESCRIPTION "Messing around with git lfs."
+  DESCRIPTION "A simple git-lfs server implementation."
   LANGUAGES CXX C)
 set(CMAKE_COLOR_MAKEFILE ON)
 
@@ -23,8 +23,14 @@ add_subdirectory(dependencies)
 
 # Main project library
 add_executable(
-  ${PROJECT_NAME} source/main.cc source/structs.cc source/hashing.cc
-                  source/server.cc source/uuid.cc source/configuration.cc)
+  ${PROJECT_NAME}
+  source/main.cc
+  source/structs.cc
+  source/hashing.cc
+  source/server.cc
+  source/uuid.cc
+  source/configuration.cc
+  source/storage.cc)
 
 # Link to dependencies
 add_dependencies(

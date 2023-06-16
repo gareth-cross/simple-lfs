@@ -29,6 +29,11 @@ int main() {
   const auto api_exit = sg::make_scope_guard([&] { Aws::ShutdownAPI(options); });
 
   lfs::Server server{config_expected.value()};
-  server.Run();
+  try {
+    server.Run();
+  } catch (std::exception& e) {
+    spdlog::error("Unhandled error: {}", e.what());
+    return 1;
+  }
   return 0;
 }

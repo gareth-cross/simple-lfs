@@ -13,6 +13,7 @@
 [submodule "dependencies/aws-sdk-cpp"]
 	path = dependencies/aws-sdk-cpp
 	url = https://github.com/aws/aws-sdk-cpp.git
+        ignore = dirty
 [submodule "dependencies/scope_guard"]
 	path = dependencies/scope_guard
 	url = https://github.com/ricab/scope_guard.git

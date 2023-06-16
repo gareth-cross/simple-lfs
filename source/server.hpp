@@ -4,6 +4,7 @@
 #include <httplib.h>
 
 #include "configuration.hpp"
+#include "storage.hpp"
 #include "structs.hpp"
 
 namespace Aws::S3 {
@@ -23,9 +24,10 @@ namespace lfs {
 // Main server object that handles HTTP requests.
 struct Server {
  public:
+  // Construct w/ configuration parameters.
   explicit Server(const Configuration& config);
 
-  // Run the HTTP server.
+  // Run the server. Returns unexpected if we could not start the server.
   void Run();
 
  private:
@@ -33,9 +35,17 @@ struct Server {
 
   httplib::Server http_server_{};
 
-  std::shared_ptr<Aws::S3::S3Client> s3_client_;
-  std::shared_ptr<Aws::Utils::Threading::PooledThreadExecutor> pooled_executor_;
-  std::shared_ptr<Aws::Transfer::TransferManager> transfer_manager_;
+  // Manages uploads and downloads from S3.
+  lfs::Storage storage_;
+
+  //  std::shared_ptr<Aws::S3::S3Client> s3_client_;
+  //  std::shared_ptr<Aws::Utils::Threading::PooledThreadExecutor> pooled_executor_;
+  //  std::shared_ptr<Aws::Transfer::TransferManager> transfer_manager_;
+
+  std::atomic_int64_t num_active_uploads_{0};
+
+  // Configure routes on the http server.
+  void SetupRoutes();
 
   // Convert exception to HTTP response.
   void HandleException(const httplib::Request& req, httplib::Response& res, std::exception_ptr ep);
@@ -49,6 +59,10 @@ struct Server {
 
   // Handle a GET request to download a file.
   void HandleObjectGet(const httplib::Request& req, httplib::Response& res);
+
+  // Download an object from bucket and stream it as part of response.
+  void DownloadAndSendObject(const std::string& oid, std::size_t object_size,
+                             httplib::Response& res);
 
   // Compute the hash of the specified file.
   static std::string ComputeFileHash(const std::filesystem::path& path, std::size_t expected_size);

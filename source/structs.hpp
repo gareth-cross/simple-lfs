@@ -21,6 +21,8 @@ constexpr std::string_view sha256 = "sha256";
 enum class error_code {
   success = 200,
   object_does_not_exist = 404,
+  // git-lfs spec recommends using HTTP 409 for "invalid hash algorithm".
+  invalid_hash_algorithm = 409,
   validation_error = 422,
   internal_error = 500,
 };
@@ -139,6 +141,8 @@ struct error_response_t {
   template <typename... Ts>
   explicit error_response_t(std::string_view fmt, Ts&&... args)
       : message(fmt::format(fmt, std::forward<Ts>(args)...)) {}
+
+  explicit error_response_t(std::string message) : message(std::move(message)) {}
 };
 
 // Decode `objects_batch_t` from json.

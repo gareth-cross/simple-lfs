@@ -22,8 +22,7 @@ tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path&
   }
 
   Configuration config{};
-  auto credentials = table["credentials"];
-  if (credentials && credentials.is_table()) {
+  if (auto credentials = table["credentials"]; credentials && credentials.is_table()) {
     // Check that both fields were provided:
     auto access_key_id = credentials["access_key_id"].value<std::string>();
     auto secret_access_key = credentials["secret_access_key"].value<std::string>();
@@ -40,20 +39,28 @@ tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path&
   config.bucket_name = bucket_name.value();
 
   // Bucket region can be left at the default value:
-  auto bucket_region = table["bucket_region"].value<std::string>();
-  if (bucket_region) {
+  if (auto bucket_region = table["bucket_region"].value<std::string>(); bucket_region) {
     config.bucket_region = bucket_region.value();
   }
 
-  auto local_storage = table["local_storage"].value<std::string>();
-  if (local_storage) {
-    config.local_storage = local_storage.value();
-  } else {
-    config.local_storage = fs::temp_directory_path();
+  if (auto endpoint = table["endpoint"].value<std::string>(); endpoint) {
+    config.endpoint = endpoint.value();
   }
 
-  auto port = table["port"].value<int>();
-  if (port) {
+  if (auto storage_location = table["storage_location"].value<std::string>(); storage_location) {
+    config.storage_location = storage_location.value();
+  } else {
+    return tl::unexpected("Parameter `storage_location` must be specified.");
+  }
+
+  if (auto upload_location = table["upload_location"].value<std::string>(); upload_location) {
+    config.upload_location = upload_location.value();
+  } else {
+    // If unspecified, default to /tmp (or whatever Windows selects).
+    config.upload_location = fs::temp_directory_path() / "lfs";
+  }
+
+  if (auto port = table["port"].value<int>(); port) {
     config.port = port.value();
     constexpr auto port_max = std::numeric_limits<int16_t>::max();
     if (config.port < 1 || config.port > port_max) {

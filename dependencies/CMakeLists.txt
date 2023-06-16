@@ -45,6 +45,9 @@ add_tomlplusplus()
 
 # Add expected
 function(add_tl_expected)
+  set(EXPECTED_BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
   add_subdirectory(tl_expected)
 endfunction()
 add_tl_expected()
