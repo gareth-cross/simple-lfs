@@ -30,8 +30,13 @@ int main() {
 
   lfs::Server server{config_expected.value()};
   try {
-    server.Run();
+    if (auto maybe_error = server.Run(); !maybe_error) {
+      spdlog::error("{}", maybe_error.error());
+      return 1;
+    }
   } catch (std::exception& e) {
+    // Catch any exceptions from the STL and print them. This is so we don't get the abort
+    // dialog on windows.
     spdlog::error("Unhandled error: {}", e.what());
     return 1;
   }

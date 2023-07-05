@@ -1,7 +1,7 @@
 #include "storage.hpp"
 
-#include <csignal>
 #include <fstream>
+#include <numeric>
 #include <regex>
 
 #include <aws/core/auth/AWSCredentials.h>
@@ -27,6 +27,12 @@ namespace fs = std::filesystem;
 #endif  //  _WIN32
 
 namespace lfs {
+
+struct SizePrinter {
+  explicit SizePrinter(std::size_t bytes) : bytes(bytes) {}
+
+  std::size_t bytes;
+};
 
 // Get the directory prefix for an OID. Per LFS convention, this is just the first 4 characters
 // of the hash in two directory levels. Ie: a0b2c91x... --> a0/b2/a0b2c91x...
@@ -121,34 +127,71 @@ Storage::Storage(lfs::Configuration config)
             TransferStatusUpdatedCallback(handle);
           })) {}
 
-void Storage::Initialize() {
+tl::expected<void, Error> Storage::Initialize() {
   // enumerate objects in our bucket
   S3::Model::ListObjectsRequest request =
       S3::Model::ListObjectsRequest{}.WithBucket(config_.bucket_name);
+
   const auto outcome = s3_client_->ListObjects(request);
-  if (outcome.IsSuccess()) {
-    const auto& success = outcome.GetResult();
-    for (const S3::Model::Object& obj : success.GetContents()) {
-      // See if this object is one of ours:
-      if (std::optional<std::string> oid = OidFromKey(obj.GetKey()); oid) {
-        s3_objects_.emplace(std::move(*oid), static_cast<std::size_t>(obj.GetSize()));
-      }
-    }
-  } else {
+  if (!outcome.IsSuccess()) {
     const auto& error = outcome.GetError();
-    throw Exception("Failed while listing objects in bucket [Exception = {}]: {}",
-                    error.GetExceptionName(), error.GetMessage());
+    return tl::unexpected<Error>("Failed while listing objects in bucket [Exception = {}]: {}",
+                                 error.GetExceptionName(), error.GetMessage());
+  }
+
+  const auto& success = outcome.GetResult();
+  for (const S3::Model::Object& obj : success.GetContents()) {
+    // See if this object is one of ours:
+    if (std::optional<std::string> oid = OidFromKey(obj.GetKey()); oid) {
+      s3_objects_.emplace(std::move(*oid), static_cast<std::size_t>(obj.GetSize()));
+    }
   }
 
   std::error_code ec{};
   if (!fs::exists(config_.storage_location) &&
       !fs::create_directories(config_.storage_location, ec)) {
-    throw Exception("Failed while creating path \"{}\": {}", config_.storage_location.string(),
-                    ec.message());
+    return tl::unexpected<Error>("Failed while creating path \"{}\": {}",
+                                 config_.storage_location.string(), ec.message());
   }
 
-  spdlog::info("Bucket: {} ({} objects)", config_.bucket_name, s3_objects_.size());
+  // Compute total size of objects in bucket:
+  const std::size_t size_in_bucket =
+      std::accumulate(s3_objects_.begin(), s3_objects_.end(), static_cast<std::size_t>(0),
+                      [](std::size_t total, const auto& pair) { return total + pair.second; });
+
+  spdlog::info("Bucket: {} ({} objects, {})", config_.bucket_name, s3_objects_.size(),
+               SizePrinter(size_in_bucket));
   spdlog::info("Storage directory: \"{}\"", config_.storage_location.string());
+
+  // enumerate the storage directory and queue uploads:
+  std::size_t upload_size = 0;
+  for (auto it = fs::recursive_directory_iterator(config_.storage_location);
+       it != fs::recursive_directory_iterator(); ++it) {
+    if (it.depth() != 2 || it->is_directory()) {
+      continue;
+    }
+
+    std::string entry_path = fs::relative(it->path(), config_.storage_location).string();
+#ifdef _WIN32
+    std::replace(entry_path.begin(), entry_path.end(), '\\', '/');
+#endif
+    const auto oid = OidFromKey(entry_path);
+    if (!oid || s3_objects_.count(*oid)) {
+      continue;
+    }
+
+    auto transfer = transfer_manager_->UploadFile(it->path().string(), config_.bucket_name,
+                                                  KeyFromOid(*oid), "application/octet-stream", {});
+    ASSERT(transfer);
+    pending_transfers_.insert(std::move(transfer));
+    upload_size += fs::file_size(it->path());
+  }
+
+  if (!pending_transfers_.empty()) {
+    spdlog::info("Queued {} ({}) uploads to the bucket from local storage.",
+                 pending_transfers_.size(), SizePrinter(upload_size));
+  }
+  return {};
 }
 
 std::optional<std::size_t> Storage::ObjectSize(const std::string& oid) {
@@ -169,7 +212,8 @@ std::optional<std::size_t> Storage::ObjectSize(const std::string& oid) {
   return std::nullopt;
 }
 
-void Storage::PutObject(const lfs::object_t& obj, const std::filesystem::path& upload_path) {
+tl::expected<void, Error> Storage::PutObject(const lfs::object_t& obj,
+                                             const std::filesystem::path& upload_path) {
   // Construct the path to the object:
   const fs::path local_dir = config_.storage_location / DirectoryPrefixFromOid(obj.oid);
   const fs::path local_path = local_dir / obj.oid;
@@ -177,21 +221,22 @@ void Storage::PutObject(const lfs::object_t& obj, const std::filesystem::path& u
   if (fs::exists(local_path)) {
     // The target already exists. These files must be identical because the sha matches.
     ASSERT_EQUAL(fs::file_size(local_path), obj.size);
-    return;
+    return {};
   }
 
-  std::error_code err_code{};
-  if (!fs::exists(local_dir) && !fs::create_directories(local_dir, err_code)) {
-    throw Exception("Failed while creating path \"{}\": {}", local_dir.string(),
-                    err_code.message());
+  std::error_code ec{};
+  if (!fs::exists(local_dir) && !fs::create_directories(local_dir, ec)) {
+    return tl::unexpected<Error>(R"(Failed to create directory: "{}", reason = "{}")",
+                                 local_dir.string(), ec.message());
   }
 
   // Move the file from the upload location to our target path:
-  fs::rename(upload_path, local_path, err_code);
-  if (err_code && !fs::exists(local_path)) {
+  ec.clear();
+  fs::rename(upload_path, local_path, ec);
+  if (ec && !fs::exists(local_path)) {
     // Failed for some reason other than the target already existing:
-    throw Exception(R"(Failed while moving file "{}" -> "{}: {}")", upload_path.string(),
-                    local_path.string(), err_code.message());
+    return tl::unexpected<Error>(R"(Failed while moving file "{}" -> "{}: {}")",
+                                 upload_path.string(), local_path.string(), ec.message());
   }
 
   // Queue an upload:
@@ -203,35 +248,50 @@ void Storage::PutObject(const lfs::object_t& obj, const std::filesystem::path& u
 
   std::lock_guard<std::mutex> lock{mutex_};
   pending_transfers_.emplace(std::move(transfer));
+  return {};
 }
 
+// LocalObjectGetter returns a file from our local storage.
 class LocalObjectGetter : public ObjectGetter {
  public:
-  explicit LocalObjectGetter(const fs::path& path)
-      : path_(path), stream_(path, std::ios::binary | std::ios::in) {
-    stream_.exceptions(std::ios::failbit | std::ios::badbit);
-  }
+  explicit LocalObjectGetter(fs::path path) : path_(std::move(path)) {}
 
-  std::size_t Read(std::size_t offset, std::size_t length, char* data) override {
-    stream_.seekg(static_cast<std::streamsize>(offset), std::ios::beg);
+  tl::expected<std::size_t, Error> Read(std::size_t offset, std::size_t length,
+                                        char* data) override {
+    // On first call, open the stream:
+    if (!stream_.is_open()) {
+      stream_.open(path_, std::ios::binary | std::ios::in);
+      if (!stream_.good()) {
+        return tl::unexpected<Error>("Failed opening path for reading: \"{}\"", path_.string());
+      }
+      stream_.exceptions(std::ios::failbit | std::ios::badbit);
+    }
+
     try {
+      stream_.seekg(static_cast<std::streamsize>(offset), std::ios::beg);
       stream_.read(data, static_cast<std::streamsize>(length));
       return static_cast<std::size_t>(stream_.gcount());
     } catch (std::ios_base::failure& failure) {
-      throw Exception("Failed reading object: offset = {}, length = {}, reason = {}", offset,
-                      length, failure.what());
+      const std::error_code& ec = failure.code();
+      return tl::unexpected<Error>(
+          R"(Failed reading object: offset = {}, length = {}, category = "{}", reason = "{}")",
+          offset, length, ec.category().name(), ec.message());
     }
   }
 
-  void Finalize() override { stream_.close(); }
+  void Finalize(bool) override {
+    if (stream_.is_open()) {
+      stream_.close();
+    }
+  }
 
  private:
   fs::path path_;
-  std::ifstream stream_;
+  std::ifstream stream_{};
 };
 
-void on_sigabrt(int) { fmt::print("sigabrt\n"); }
-
+// BucketObjectGetter returns an object from S3. This is designed to allow for a streaming
+// response. As parts are fetched from S3, we return them to the client.
 class BucketObjectGetter : public ObjectGetter {
  public:
   static constexpr std::size_t ChunkSize = 1024 * 1024;
@@ -242,38 +302,67 @@ class BucketObjectGetter : public ObjectGetter {
       : object_(std::move(object)),
         download_path_(std::move(download_path)),
         config_(std::move(config)),
-        client_(std::move(client)) {
-    const auto parent = download_path_.parent_path();
-    std::error_code ec{};
-    if (!fs::exists(parent) && !fs::create_directories(parent, ec)) {
-      throw Exception("Failed create directory: \"{}\"", parent.string());
+        client_(std::move(client)) {}
+
+  tl::expected<std::size_t, Error> Read(std::size_t offset, std::size_t length,
+                                        char* data) override {
+    if (!stream_.is_open()) {
+      const auto parent = download_path_.parent_path();
+      std::error_code ec{};
+      if (!fs::exists(parent) && !fs::create_directories(parent, ec)) {
+        return tl::unexpected<Error>(R"(Failed to create directory: "{}", reason = "{}")",
+                                     parent.string(), ec.message());
+      }
+
+      stream_.open(download_path_,
+                   std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
+      if (!stream_.good()) {
+        return tl::unexpected<Error>("Failed opening path for writing: \"{}\"",
+                                     download_path_.string());
+      }
+      stream_.exceptions(std::ios::failbit | std::ios::badbit);
     }
-    stream_.open(download_path_, std::ios::in | std::ios::out | std::ios::trunc);
-    ASSERT(stream_.good(), "Failed to open path: \"{}\"", download_path_.string());
 
-    // Enable exceptions on the stream:
-    stream_.exceptions(std::ios::badbit | std::ios::failbit);
-  }
-
-  std::size_t Read(std::size_t offset, std::size_t length, char* data) override {
     if (position_ < offset + length) {
-      FetchNextPart();
+      if (auto maybe_fetch = FetchNextPart(); !maybe_fetch) {
+        return tl::unexpected(std::move(maybe_fetch.error()));
+      }
     }
 
     // Somewhat lazy here - we just use the fstream as our buffer and read back what we wrote.
     const std::size_t amount_to_read = std::min(length, position_ - offset);
-    stream_.seekg(static_cast<std::streamsize>(offset), std::ios::beg);
-    stream_.read(data, static_cast<std::streamsize>(amount_to_read));
-    const std::size_t amount_read = stream_.gcount();
-    return amount_read;
+    try {
+      stream_.seekg(static_cast<std::streamsize>(offset), std::ios::beg);
+      stream_.read(data, static_cast<std::streamsize>(amount_to_read));
+      const std::size_t amount_read = stream_.gcount();
+      return amount_read;
+    } catch (std::ios_base::failure& failure) {
+      const auto& ec = failure.code();
+      return tl::unexpected<Error>(
+          R"(Failed reading object: offset = {}, length = {}, category = "{}", reason = "{}")",
+          offset, amount_to_read, ec.category().name(), ec.message());
+    }
   }
 
-  void Finalize() override {
+  void Finalize(bool success) override {
     // Close the file and move it to the final destination:
-    stream_.close();
+    if (stream_.is_open()) {
+      stream_.close();
+    }
+    if (success && fs::exists(download_path_)) {
+      const fs::path final_path = config_->storage_location / KeyFromOid(object_.oid);
+
+      std::error_code ec{};
+      fs::rename(download_path_, final_path, ec);
+      if (ec && !fs::exists(final_path)) {
+        // Failed for some other reason than the destination exists.
+        spdlog::warn(R"(Failed moving to final path: "{}" -> "{}")", download_path_.string(),
+                     final_path.string());
+      }
+    }
   }
 
-  void FetchNextPart() {
+  tl::expected<void, Error> FetchNextPart() {
     // The last byte we will read, inclusive:
     const std::size_t range_end = std::min(position_ + ChunkSize, object_.size) - 1;
     const std::size_t range_len = range_end - position_ + 1;
@@ -289,42 +378,49 @@ class BucketObjectGetter : public ObjectGetter {
       const auto outcome = client_->GetObject(request);
       if (outcome.IsSuccess()) {
         const S3::Model::GetObjectResult& result = outcome.GetResult();
-        ASSERT_EQUAL(static_cast<std::size_t>(result.GetContentLength()), range_len);
+        if (static_cast<std::size_t>(result.GetContentLength()) < range_len) {
+          return tl::unexpected<Error>(
+              "Returned content has incorrect length: oid = {}, range = {}-{}, expected={}, "
+              "actual={}",
+              object_.oid, position_, range_end, range_len, result.GetContentLength());
+        }
 
         // Copy the result from in-memory stream to disk:
         Aws::IOStream& input_stream = result.GetBody();
-        UpdateHash(input_stream);
+        if (auto hash_result = UpdateHash(input_stream); !hash_result) {
+          return tl::unexpected(std::move(hash_result.error()));
+        }
 
         // Write it to our output stream:
         input_stream.seekg(0, std::ios::beg);
-        stream_.seekg(0, std::ios::end);
-        stream_ << input_stream.rdbuf();
+        try {
+          stream_.seekg(0, std::ios::end);
+          stream_ << input_stream.rdbuf();
+        } catch (std::ios_base::failure& failure) {
+          const auto& ec = failure.code();
+          return tl::unexpected<Error>(R"(Failed writing object: category = "{}", reason = "{}")",
+                                       ec.category().name(), ec.message());
+        }
         position_ = range_end + 1;
-        return;  //  Success
+        break;
       }
 
       const auto& err = outcome.GetError();
-      if (err.ShouldRetry()) {
+      if (err.ShouldRetry() && attempt + 1 < max_attempts) {
         continue;
       } else {
-        ASSERT(false, "Fatal");
-        break;
+        // No more attempts allowed:
+        return tl::unexpected<Error>(R"(Failed S3 download: oid = {}, name = "{}", message = "{}")",
+                                     object_.oid, err.GetExceptionName(), err.GetMessage());
       }
     }
-    ASSERT(false, "Fatal");
+    return {};  // Success.
   }
 
-  void UpdateHash(Aws::IOStream& input_stream) {
+  [[nodiscard]] tl::expected<void, Error> UpdateHash(Aws::IOStream& input_stream) {
     input_stream.seekg(0, std::ios::beg);
 
-    signal(SIGABRT, &on_sigabrt);
-
-    std::set_terminate([]() {
-      fmt::print("Terminate handler!\n");
-      fmt::print("Terminate handler!\n");
-    });
-
-    // Update the hash. TODO: Eliminate this copy.
+    // Update the hash.
     std::vector<char> copy{std::istreambuf_iterator<char>(input_stream),
                            std::istreambuf_iterator<char>()};
     ASSERT(input_stream.good());
@@ -335,13 +431,11 @@ class BucketObjectGetter : public ObjectGetter {
       const Sha256 hash = hasher_.GetHash();
       const auto hash_str = StringFromSha256(hash);
       if (hash_str != object_.oid) {
-        int count = std::uncaught_exceptions();
-        spdlog::info("uncaught: {}", count);
-        throw Exception(
-            "Invalid hash on object downloaded from bucket: oid = {}, computed = {}, size = {}",
-            object_.oid, hash_str, object_.size);
+        return tl::unexpected<Error>("Downloaded object has invalid hash: oid = {}, actual = {}",
+                                     object_.oid, hash_str);  //  Failed hash comparison.
       }
     }
+    return {};
   }
 
  private:
@@ -364,7 +458,8 @@ class BucketObjectGetter : public ObjectGetter {
   std::shared_ptr<S3::S3Client> client_;
 };
 
-std::shared_ptr<ObjectGetter> Storage::GetObject(const lfs::object_t& obj) {
+tl::expected<ObjectGetter::shared_ptr, Error> Storage::GetObject(const lfs::object_t& obj) {
+  // Check if object exists in local cache already:
   const fs::path local_dir = config_.storage_location / DirectoryPrefixFromOid(obj.oid);
   const fs::path local_path = local_dir / obj.oid;
   if (fs::exists(local_path)) {
@@ -375,9 +470,9 @@ std::shared_ptr<ObjectGetter> Storage::GetObject(const lfs::object_t& obj) {
 
   const fs::space_info space = fs::space(config_.storage_location);
   if (space.available < obj.size) {
-    throw Exception(
+    return tl::unexpected(Error{
         "Insufficient space to transfer file from S3: oid = {}, required = {}, available = {}",
-        obj.oid, obj.size, space.available);
+        obj.oid, obj.size, space.available});
   }
 
   // Start a download of the object:
@@ -391,14 +486,31 @@ std::shared_ptr<ObjectGetter> Storage::GetObject(const lfs::object_t& obj) {
 
 void Storage::TransferStatusUpdatedCallback(
     const std::shared_ptr<const Transfer::TransferHandle>& handle) {
+  switch (handle->GetStatus()) {
+    case Transfer::TransferStatus::ABORTED:
+    case Transfer::TransferStatus::CANCELED:
+    case Transfer::TransferStatus::COMPLETED:
+    case Transfer::TransferStatus::FAILED:
+      HandleTransferEnd(handle);
+      break;
+    default:
+      // Don't care about other cases.
+      return;
+  }
+}
+
+void Storage::HandleTransferEnd(
+    const std::shared_ptr<const Aws::Transfer::TransferHandle>& handle) {
   const std::string oid = OidFromKey(handle->GetKey()).value();
   const auto size = handle->GetBytesTotalSize();
+
+  // Lock before modifying shared state:
+  std::lock_guard<std::mutex> lock{mutex_};
+  pending_transfers_.erase(handle);
+
   if (handle->GetStatus() == Transfer::TransferStatus::COMPLETED) {
     // Update internal map:
-    {
-      std::lock_guard<std::mutex> lock{mutex_};
-      s3_objects_.emplace(oid, size);
-    }
+    s3_objects_.emplace(oid, size);
     spdlog::info("Completed object upload: oid = {}, size = {}", oid, size);
   } else if (handle->GetStatus() == Transfer::TransferStatus::CANCELED) {
     // Cancelled, maybe because we are shutting down.
@@ -406,12 +518,34 @@ void Storage::TransferStatusUpdatedCallback(
   } else if (handle->GetStatus() == Transfer::TransferStatus::FAILED) {
     // Failed:
     auto error = handle->GetLastError();
-    spdlog::warn(R"(Object upload failed: exception = "{}", message = "{}", oid = {}, size = {})",
-                 error.GetExceptionName(), error.GetMessage(), oid, size);
+    spdlog::warn(R"(Object upload failed: oid = {}, size = {}, exception = "{}", message = "{}")",
+                 oid, size, error.GetExceptionName(), error.GetMessage());
   }
 }
 
 }  // namespace lfs
+
+// Pretty-printing for disk sizes.
+template <>
+struct fmt::formatter<lfs::SizePrinter> {
+  constexpr auto parse(format_parse_context& ctx) -> format_parse_context::iterator {
+    return ctx.begin();
+  }
+
+  auto format(const lfs::SizePrinter& sz, format_context& ctx) const -> format_context::iterator {
+    constexpr auto gig = static_cast<std::size_t>(1073741824);
+    constexpr auto meg = static_cast<std::size_t>(1048576);
+    if (sz.bytes >= gig) {
+      return fmt::format_to(ctx.out(), "{:.3f}GB",
+                            static_cast<double>(sz.bytes) / static_cast<double>(gig));
+    } else if (sz.bytes >= meg) {
+      return fmt::format_to(ctx.out(), "{:.3f}MB",
+                            static_cast<double>(sz.bytes) / static_cast<double>(meg));
+    } else {
+      return fmt::format_to(ctx.out(), "{}bytes", sz.bytes);
+    }
+  }
+};
 
 #ifdef _WIN32
 #pragma pop_macro("GetMessage")

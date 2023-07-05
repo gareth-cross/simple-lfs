@@ -44,24 +44,26 @@ Server::Server(const Configuration& config) : config_(config), storage_(config) 
   http_server_.set_write_timeout(std::chrono::seconds(3600));
 }
 
-void Server::Run() {
+tl::expected<void, Error> Server::Run() {
   // Itemize contents of the S3 bucket and start the uploader:
-  storage_.Initialize();
+  if (auto maybe_init = storage_.Initialize(); !maybe_init) {
+    return maybe_init;
+  }
 
   // Make sure the upload directory exists:
   std::error_code ec{};
   if (!fs::exists(config_.upload_location) &&
       !fs::create_directories(config_.upload_location, ec)) {
-    throw Exception("Failed while creating path \"{}\": {}", config_.upload_location.string(),
-                    ec.message());
+    return tl::unexpected<Error>("Failed while creating path \"{}\": {}",
+                                 config_.upload_location.string(), ec.message());
   }
 
   SetupRoutes();
   spdlog::info("Starting server on port {}...", config_.port);
   if (!http_server_.listen("0.0.0.0", config_.port)) {
-    // We don't get any detail error info here, but it's probably because the port is in use.
-    throw Exception("Unable to start HTTP server (port probably already in use).");
+    return tl::unexpected<Error>("Unable to start HTTP server (port probably already in use).");
   }
+  return {};
 }
 
 void Server::SetupRoutes() {
@@ -219,7 +221,11 @@ void Server::HandleObjectPut(const httplib::Request& req, httplib::Response& res
   spdlog::info("Received object: oid = {}, size = {}", obj.oid, obj.size);
 
   // Move the object to storage location:
-  storage_.PutObject(obj, upload_filename);
+  auto maybe_put = storage_.PutObject(obj, upload_filename);
+  if (!maybe_put) {
+    FillWithError(res, maybe_put.error());
+    return;
+  }
 
   // Create a response w/ a download URL to indicate success.
   lfs::response_t response{};
@@ -269,7 +275,13 @@ void Server::HandleObjectGet(const httplib::Request& req, httplib::Response& res
 
 void Server::DownloadAndSendObject(const std::string& oid, const std::size_t object_size,
                                    httplib::Response& res) {
-  auto getter = storage_.GetObject(lfs::object_t{oid, object_size});
+  tl::expected maybe_getter = storage_.GetObject(lfs::object_t{oid, object_size});
+  if (!maybe_getter) {
+    FillWithError(res, error_code::internal_error, "Internal error: {}", maybe_getter.error());
+    return;
+  }
+
+  ObjectGetter::shared_ptr getter = maybe_getter.value();
   ASSERT(getter);
 
   // set_content_provider returns immediately, and our lambda is executed later:
@@ -277,12 +289,24 @@ void Server::DownloadAndSendObject(const std::string& oid, const std::size_t obj
   res.set_content_provider(
       object_size, std::string{lfs::mime_type},
       [getter](std::size_t offset, std::size_t length, httplib::DataSink& sink) -> bool {
-        std::vector<char> buffer(length);
-        const std::size_t actual_length = getter->Read(offset, length, buffer.data());
-        sink.write(buffer.data(), actual_length);
-        return true;
+        // httplib does not catch exceptions in the content provider, so we do it
+        try {
+          std::vector<char> buffer(length);
+          const tl::expected<std::size_t, Error> maybe_actual_length =
+              getter->Read(offset, length, buffer.data());
+          if (maybe_actual_length) {
+            sink.write(buffer.data(), maybe_actual_length.value());
+          } else {
+            spdlog::error(maybe_actual_length.error());
+            return false;
+          }
+          return true;
+        } catch (std::exception& exception) {
+          spdlog::error("Exception while sending content: {}", exception.what());
+          return false;
+        }
       },
-      [getter](bool) { getter->Finalize(); });
+      [getter](bool success) { getter->Finalize(success); });
 }
 
 template <typename... Ts>
@@ -293,6 +317,14 @@ void Server::FillWithError(httplib::Response& res, lfs::error_code code,
 
   const lfs::error_response_t error_response{std::move(message)};
   res.status = static_cast<int>(code);
+  res.set_content(lfs::EncodeResponse(error_response), std::string(lfs::mime_type_json));
+}
+
+void Server::FillWithError(httplib::Response& res, const Error& error) const {
+  spdlog::error(error.Message());
+
+  const lfs::error_response_t error_response{error.Message()};
+  res.status = static_cast<int>(lfs::error_code::internal_error);
   res.set_content(lfs::EncodeResponse(error_response), std::string(lfs::mime_type_json));
 }
 

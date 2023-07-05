@@ -28,7 +28,7 @@ struct Server {
   explicit Server(const Configuration& config);
 
   // Run the server. Returns unexpected if we could not start the server.
-  void Run();
+  [[nodiscard]] tl::expected<void, Error> Run();
 
  private:
   Configuration config_;
@@ -37,10 +37,6 @@ struct Server {
 
   // Manages uploads and downloads from S3.
   lfs::Storage storage_;
-
-  //  std::shared_ptr<Aws::S3::S3Client> s3_client_;
-  //  std::shared_ptr<Aws::Utils::Threading::PooledThreadExecutor> pooled_executor_;
-  //  std::shared_ptr<Aws::Transfer::TransferManager> transfer_manager_;
 
   std::atomic_int64_t num_active_uploads_{0};
 
@@ -64,12 +60,12 @@ struct Server {
   void DownloadAndSendObject(const std::string& oid, std::size_t object_size,
                              httplib::Response& res);
 
-  // Compute the hash of the specified file.
-  static std::string ComputeFileHash(const std::filesystem::path& path, std::size_t expected_size);
-
   // Fill response w/ an error.
   template <typename... Ts>
   void FillWithError(httplib::Response& res, lfs::error_code code, Ts&&... format_args) const;
+
+  // Fill response w/ message from `Error` object:
+  void FillWithError(httplib::Response& res, const Error& error) const;
 };
 
 }  // namespace lfs
