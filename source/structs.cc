@@ -6,9 +6,9 @@ using json = nlohmann::json;
 
 namespace lfs {
 
-NLOHMANN_JSON_SERIALIZE_ENUM(operation, {{operation::invalid, nullptr},
-                                         {operation::upload, "upload"},
-                                         {operation::download, "download"}})
+NLOHMANN_JSON_SERIALIZE_ENUM(op, {{op::invalid, nullptr},
+                                  {op::upload, "upload"},
+                                  {op::download, "download"}})
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(object_t, oid, size)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ref_t, name)

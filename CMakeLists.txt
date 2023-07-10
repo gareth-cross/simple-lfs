@@ -62,6 +62,12 @@ target_link_libraries(
 if(WIN32)
   # for UUID functionality on windows:
   target_link_libraries(${PROJECT_NAME} Rpcrt4)
+else()
+  # for UUID functionality on linux:
+  find_package(PkgConfig REQUIRED)
+  pkg_search_module(UUID REQUIRED uuid)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${UUID_INCLUDE_DIRS})
+  target_link_libraries(${PROJECT_NAME} ${UUID_LIBRARIES})
 endif()
 
 # Turn on C++17

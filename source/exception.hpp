@@ -9,14 +9,12 @@ namespace lfs {
 // TODO: We could return typed errors in a variant (or at least preserve more type information).
 // That said, everything will just be converted to HTTP 500, so the specific cause of error is
 // often not that relevant (yet).
-struct Error : public std::exception {
+struct Error {
  public:
   // Create w/ format string.
   template <typename... Ts>
   explicit Error(fmt::string_view fmt, Ts&&... args)
       : str_(fmt::format(fmt, std::forward<Ts>(args)...)) {}
-
-  [[nodiscard]] const char* what() const final { return str_.c_str(); }
 
   const std::string& Message() const { return str_; }
 

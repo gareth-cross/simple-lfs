@@ -28,7 +28,7 @@ enum class error_code {
 };
 
 // Types of operations we can instruct the client to do.
-enum operation {
+enum op {
   invalid,
   upload,
   download,
@@ -48,7 +48,7 @@ struct ref_t {
 // Struct the client sends when making a PUT operation on the /batch API.
 struct objects_batch_t {
   // Either `upload` or `download`.
-  operation operation{operation::invalid};
+  op operation{op::invalid};
   // Objects the client is requesting.
   std::vector<object_t> objects;
   // Types of transfer that the client can support. We ignore this and assume basic.

@@ -17,7 +17,7 @@ class AssertionError : public std::exception {
  public:
   explicit AssertionError(std::string&& str) : str_(std::move(str)) {}
 
-  [[nodiscard]] const char* what() const override { return str_.c_str(); }
+  [[nodiscard]] const char* what() const noexcept override { return str_.c_str(); }
 
  private:
   std::string str_;
