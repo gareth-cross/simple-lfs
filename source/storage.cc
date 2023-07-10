@@ -132,19 +132,30 @@ tl::expected<void, Error> Storage::Initialize() {
   S3::Model::ListObjectsRequest request =
       S3::Model::ListObjectsRequest{}.WithBucket(config_.bucket_name);
 
-  const auto outcome = s3_client_->ListObjects(request);
-  if (!outcome.IsSuccess()) {
-    const auto& error = outcome.GetError();
-    return tl::unexpected<Error>("Failed while listing objects in bucket [Exception = {}]: {}",
-                                 error.GetExceptionName(), error.GetMessage());
-  }
-
-  const auto& success = outcome.GetResult();
-  for (const S3::Model::Object& obj : success.GetContents()) {
-    // See if this object is one of ours:
-    if (std::optional<std::string> oid = OidFromKey(obj.GetKey()); oid) {
-      s3_objects_.emplace(std::move(*oid), static_cast<std::size_t>(obj.GetSize()));
+  for (;;) {
+    const auto outcome = s3_client_->ListObjects(request);
+    if (!outcome.IsSuccess()) {
+      const auto& error = outcome.GetError();
+      return tl::unexpected<Error>("Failed while listing objects in bucket [Exception = {}]: {}",
+                                   error.GetExceptionName(), error.GetMessage());
     }
+
+    const auto& success = outcome.GetResult();
+    const auto& contents = success.GetContents();
+    if (contents.empty()) {
+      // Done.
+      break;
+    }
+    for (const S3::Model::Object& obj : contents) {
+      // See if this object is one of ours:
+      if (std::optional<std::string> oid = OidFromKey(obj.GetKey()); oid) {
+        const auto size = static_cast<std::size_t>(obj.GetSize());
+        s3_objects_.emplace(std::move(*oid), size);
+      }
+    }
+
+    // Request the next batch, starting from the end of this one:
+    request.WithMarker(contents.back().GetKey());
   }
 
   std::error_code ec{};
