@@ -52,6 +52,11 @@ tl::expected<void, Error> Server::Run() {
   return {};
 }
 
+void Server::Stop() {
+  http_server_.stop();
+  storage_.OnExit();
+}
+
 void Server::SetupRoutes() {
   http_server_.Post("/objects/batch", [this](const httplib::Request& req, httplib::Response& res) {
     HandleBatchPost(req, res);

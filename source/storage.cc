@@ -495,6 +495,22 @@ tl::expected<ObjectGetter::shared_ptr, Error> Storage::GetObject(const lfs::obje
   return std::make_shared<BucketObjectGetter>(obj, download_path, config_, s3_client_);
 }
 
+void Storage::OnExit() {
+  const std::size_t num_pending = std::invoke([this] {
+    // Scoped lock to get the # of pending transfers.
+    // Avoid any recursive locking that might be triggered by cancellation.
+    std::lock_guard lock{mutex_};
+    return pending_transfers_.size();
+  });
+  if (num_pending == 0) {
+    spdlog::info("There were no pending uploads.");
+  } else {
+    // Cancel all tasks.
+    spdlog::warn("There are currently {} pending uploads.", num_pending);
+    transfer_manager_->CancelAll();
+  }
+}
+
 void Storage::TransferStatusUpdatedCallback(
     const std::shared_ptr<const Transfer::TransferHandle>& handle) {
   switch (handle->GetStatus()) {
@@ -525,7 +541,7 @@ void Storage::HandleTransferEnd(
     spdlog::info("Completed object upload: oid = {}, size = {}", oid, size);
   } else if (handle->GetStatus() == Transfer::TransferStatus::CANCELED) {
     // Cancelled, maybe because we are shutting down.
-    spdlog::info("Cancelled object upload: oid = {}, size = {}", oid, size);
+    spdlog::debug("Cancelled object upload: oid = {}, size = {}", oid, size);
   } else if (handle->GetStatus() == Transfer::TransferStatus::FAILED) {
     // Failed:
     auto error = handle->GetLastError();

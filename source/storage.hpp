@@ -70,6 +70,9 @@ struct Storage {
   // Return an abstract object that can read a specific object.
   [[nodiscard]] tl::expected<ObjectGetter::shared_ptr, Error> GetObject(const lfs::object_t& obj);
 
+  // Called by the server when shutting down.
+  void OnExit();
+
  private:
   std::shared_ptr<const Configuration> config_;
 

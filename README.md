@@ -69,5 +69,7 @@ simplelfs --config <PATH TO TOML FILE>
 
 ### TODO:
 Some improvements I would like to make:
+- Add test coverage.
 - Automatically trim the local cache.
+- Allow logs to be written to somewhere besides stdout.
 - Support HTTPS.
