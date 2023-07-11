@@ -9,7 +9,8 @@ namespace lfs {
 
 namespace fs = std::filesystem;
 
-tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path& path) {
+tl::expected<std::shared_ptr<const Configuration>, std::string> LoadConfig(
+    const std::filesystem::path& path) {
   if (!fs::exists(path)) {
     return tl::unexpected(fmt::format("Configuration file does not exist: {}", path.string()));
   }
@@ -32,6 +33,7 @@ tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path&
     config.credentials = Credentials{*access_key_id, *secret_access_key};
   }
 
+  // Bucket name must be specified, since there is no reasonable default for this:
   auto bucket_name = table["bucket_name"].value<std::string>();
   if (!bucket_name) {
     return tl::unexpected("The field bucket_name is missing from the configuration file.");
@@ -43,9 +45,8 @@ tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path&
     config.bucket_region = bucket_region.value();
   }
 
-  if (auto endpoint = table["endpoint"].value<std::string>(); endpoint) {
-    config.endpoint = endpoint.value();
-  }
+  // endpoint is optional, we don't need to assign a default here:
+  config.endpoint = table["endpoint"].value<std::string>();
 
   if (auto storage_location = table["storage_location"].value<std::string>(); storage_location) {
     config.storage_location = storage_location.value();
@@ -56,8 +57,14 @@ tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path&
   if (auto upload_location = table["upload_location"].value<std::string>(); upload_location) {
     config.upload_location = upload_location.value();
   } else {
-    // If unspecified, default to /tmp (or whatever Windows selects).
+    // If unspecified, default to /tmp (or whatever Windows selects, which is usually AppData).
     config.upload_location = fs::temp_directory_path() / "lfs";
+  }
+
+  if (auto hostname = table["hostname"].value<std::string>(); hostname) {
+    config.hostname = std::move(hostname.value());
+  } else {
+    config.hostname = "localhost";
   }
 
   if (auto port = table["port"].value<int>(); port) {
@@ -69,7 +76,7 @@ tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path&
                       config.port));
     }
   }
-  return config;
+  return std::make_shared<const Configuration>(std::move(config));
 }
 
 }  // namespace lfs

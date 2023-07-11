@@ -96,17 +96,6 @@ struct object_actions_t {
 struct error_t {
   int code{0};
   std::string message;
-
-  error_t() = default;
-
-  // Construct w/ error code and message w/ formatting.
-  template <typename... Ts>
-  error_t(error_code code, std::string_view fmt, Ts&&... args)
-      : code(static_cast<int>(code)), message(fmt::format(fmt, std::forward<Ts>(args)...)) {}
-
-  // Construct w/ error code and message.
-  error_t(error_code code, std::string message)
-      : code(static_cast<int>(code)), message(std::move(message)) {}
 };
 
 // Indicate an error occurred processing a request for a specific object.

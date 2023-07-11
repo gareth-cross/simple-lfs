@@ -1,7 +1,6 @@
 #include "server.hpp"
 
 #include <filesystem>
-#include <optional>
 #include <regex>
 #include <string>
 
@@ -14,7 +13,7 @@
 #include <aws/transfer/TransferManager.h>
 
 #include "assertions.hpp"
-#include "exception.hpp"
+#include "error_type.hpp"
 #include "hashing.hpp"
 #include "uuid.hpp"
 
@@ -24,21 +23,8 @@ namespace fs = std::filesystem;
 
 namespace lfs {
 
-// Object that removes a directory (and its children) on destruction.
-struct DirectoryCleanup {
-  explicit DirectoryCleanup(std::filesystem::path path) : path_(std::move(path)) {}
-
-  ~DirectoryCleanup() {
-    // Try not to throw here, since an exception might already be in flight:
-    std::error_code err_code{};
-    fs::remove_all(path_, err_code);
-  }
-
- private:
-  std::filesystem::path path_;
-};
-
-Server::Server(const Configuration& config) : config_(config), storage_(config) {
+Server::Server(std::shared_ptr<const Configuration> config)
+    : config_(std::move(config)), storage_(config_) {
   // Configure the http server to allow large uploads:
   http_server_.set_read_timeout(std::chrono::seconds(3600));
   http_server_.set_write_timeout(std::chrono::seconds(3600));
@@ -52,15 +38,15 @@ tl::expected<void, Error> Server::Run() {
 
   // Make sure the upload directory exists:
   std::error_code ec{};
-  if (!fs::exists(config_.upload_location) &&
-      !fs::create_directories(config_.upload_location, ec)) {
+  if (!fs::exists(config_->upload_location) &&
+      !fs::create_directories(config_->upload_location, ec)) {
     return tl::unexpected<Error>("Failed while creating path \"{}\": {}",
-                                 config_.upload_location.string(), ec.message());
+                                 config_->upload_location.string(), ec.message());
   }
 
   SetupRoutes();
-  spdlog::info("Starting server on port {}...", config_.port);
-  if (!http_server_.listen("0.0.0.0", config_.port)) {
+  spdlog::info("Starting server on port {}...", config_->port);
+  if (!http_server_.listen("0.0.0.0", config_->port)) {
     return tl::unexpected<Error>("Unable to start HTTP server (port probably already in use).");
   }
   return {};
@@ -124,13 +110,13 @@ void Server::HandleBatchPost(const httplib::Request& req, httplib::Response& res
       ASSERT_EQUAL(obj.size, maybe_size.value(), "Requested size does not match server value.");
 
       // The object exists, so return a download URL:
-      lfs::action_url_t download{fmt::format("http://localhost/objects/{}", obj.oid),
+      lfs::action_url_t download{fmt::format("http://{}/objects/{}", config_->hostname, obj.oid),
                                  {{"Accept", std::string(lfs::mime_type)}}};
       ++num_downloads;
       response.objects.emplace_back(lfs::object_actions_t{obj, "download", std::move(download)});
     } else {
       // Tell the client how to upload this object:
-      lfs::action_url_t upload{fmt::format("http://localhost/objects/{}", obj.oid),
+      lfs::action_url_t upload{fmt::format("http://{}/objects/{}", config_->hostname, obj.oid),
                                {{"Accept", std::string(lfs::mime_type_json)}}};
       response.objects.emplace_back(lfs::object_actions_t{obj, "upload", std::move(upload)});
     }
@@ -157,7 +143,7 @@ void Server::HandleObjectPut(const httplib::Request& req, httplib::Response& res
 
   // Create a unique sub-folder to place this file into:
   const fs::path upload_filename =
-      config_.upload_location / fmt::format("{}.{}", obj.oid, GenerateUuidString());
+      config_->upload_location / fmt::format("{}.{}", obj.oid, GenerateUuidString());
 
   // On completion, we will remove this directory.
   const auto cleanup = sg::make_scope_guard([&] {
@@ -167,7 +153,7 @@ void Server::HandleObjectPut(const httplib::Request& req, httplib::Response& res
     }
   });
 
-  const fs::space_info space = fs::space(config_.upload_location);
+  const fs::space_info space = fs::space(config_->upload_location);
   if (space.available < obj.size) {
     FillWithError(res, lfs::error_code::internal_error,
                   "Insufficient space to receive file: oid = {}, required = {}, available = {}",
@@ -229,7 +215,7 @@ void Server::HandleObjectPut(const httplib::Request& req, httplib::Response& res
 
   // Create a response w/ a download URL to indicate success.
   lfs::response_t response{};
-  lfs::action_url_t download{fmt::format("http://localhost/objects/{}", obj.oid),
+  lfs::action_url_t download{fmt::format("http://{}/objects/{}", config_->hostname, obj.oid),
                              {{"Accept", std::string(lfs::mime_type)}}};
   response.objects.emplace_back(lfs::object_actions_t{obj, "download", std::move(download)});
 
@@ -255,7 +241,7 @@ void Server::HandleObjectGet(const httplib::Request& req, httplib::Response& res
   if (accept == lfs::mime_type_json) {
     // Client is requesting meta-data about an object:
     lfs::response_t response{};
-    lfs::action_url_t download{fmt::format("http://localhost/objects/{}", oid),
+    lfs::action_url_t download{fmt::format("http://{}/objects/{}", config_->hostname, oid),
                                {{"Accept", std::string(lfs::mime_type)}}};
     response.objects.emplace_back(lfs::object_actions_t{lfs::object_t{oid, maybe_size.value()},
                                                         "download", std::move(download)});
@@ -269,7 +255,6 @@ void Server::HandleObjectGet(const httplib::Request& req, httplib::Response& res
   } else {
     FillWithError(res, error_code::validation_error, "Invalid content type requested: \"{}\"",
                   accept);
-    return;
   }
 }
 

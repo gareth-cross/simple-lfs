@@ -25,7 +25,9 @@ std::string GenerateUuidString() {
   std::string uuid_str_converted{reinterpret_cast<const char*>(uuid_str)};
 #else
   uuid_t uuid;
+  static_assert(sizeof(uuid) == 16, "UUID is supposed to be 16 bytes");
   uuid_generate(uuid);
+
   char buffer[37];  //  36 bytes plus trailing zero
   uuid_unparse(uuid, &buffer[0]);
   std::string uuid_str_converted{buffer};

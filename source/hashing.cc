@@ -35,16 +35,4 @@ std::string StringFromSha256(const Sha256& sha) {
   return fmt::format("{:02x}", fmt::join(sha, ""));
 }
 
-std::string Base64FromSha256(const Sha256& sha) {
-  // Expected size of the hashed data:
-  // (32 * 4 / 3), rounded up to nearest 4, plus one for null terminator.
-  constexpr std::size_t expected_size = 45;
-  std::array<uint8_t, expected_size> encoded{};
-  const std::size_t sha_size = sha.size();
-  const int encoded_len = EVP_EncodeBlock(encoded.data(), sha.data(), static_cast<int>(sha_size));
-  ASSERT_EQUAL(expected_size, static_cast<std::size_t>(encoded_len) + 1,
-               "Wrong size for base-64 encoded sha-256.");
-  return std::string{encoded.begin(), encoded.end()};
-}
-
 }  // namespace lfs

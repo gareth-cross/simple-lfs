@@ -11,7 +11,7 @@
 #include <aws/transfer/TransferManager.h>
 
 #include "assertions.hpp"
-#include "exception.hpp"
+#include "error_type.hpp"
 #include "hashing.hpp"
 #include "uuid.hpp"
 
@@ -28,9 +28,9 @@ namespace fs = std::filesystem;
 
 namespace lfs {
 
+// Intercepted by a custom fmt::formatter, so that we can pretty-print file sizes.
 struct SizePrinter {
   explicit SizePrinter(std::size_t bytes) : bytes(bytes) {}
-
   std::size_t bytes;
 };
 
@@ -115,9 +115,9 @@ inline std::shared_ptr<Transfer::TransferManager> CreateTransferManager(
   return Transfer::TransferManager::Create(transfer_config);
 }
 
-Storage::Storage(lfs::Configuration config)
+Storage::Storage(std::shared_ptr<const Configuration> config)
     : config_(std::move(config)),
-      s3_client_(CreateS3Client(config_)),
+      s3_client_(CreateS3Client(*config_)),
       pooled_executor_{
           Aws::MakeShared<Aws::Utils::Threading::PooledThreadExecutor>("executor", 16)},
       transfer_manager_(CreateTransferManager(
@@ -130,7 +130,7 @@ Storage::Storage(lfs::Configuration config)
 tl::expected<void, Error> Storage::Initialize() {
   // enumerate objects in our bucket
   S3::Model::ListObjectsRequest request =
-      S3::Model::ListObjectsRequest{}.WithBucket(config_.bucket_name);
+      S3::Model::ListObjectsRequest{}.WithBucket(config_->bucket_name);
 
   for (;;) {
     const auto outcome = s3_client_->ListObjects(request);
@@ -159,10 +159,10 @@ tl::expected<void, Error> Storage::Initialize() {
   }
 
   std::error_code ec{};
-  if (!fs::exists(config_.storage_location) &&
-      !fs::create_directories(config_.storage_location, ec)) {
+  if (!fs::exists(config_->storage_location) &&
+      !fs::create_directories(config_->storage_location, ec)) {
     return tl::unexpected<Error>("Failed while creating path \"{}\": {}",
-                                 config_.storage_location.string(), ec.message());
+                                 config_->storage_location.string(), ec.message());
   }
 
   // Compute total size of objects in bucket:
@@ -170,19 +170,19 @@ tl::expected<void, Error> Storage::Initialize() {
       std::accumulate(s3_objects_.begin(), s3_objects_.end(), static_cast<std::size_t>(0),
                       [](std::size_t total, const auto& pair) { return total + pair.second; });
 
-  spdlog::info("Bucket: {} ({} objects, {})", config_.bucket_name, s3_objects_.size(),
+  spdlog::info("Bucket: {} ({} objects, {})", config_->bucket_name, s3_objects_.size(),
                SizePrinter(size_in_bucket));
-  spdlog::info("Storage directory: \"{}\"", config_.storage_location.string());
+  spdlog::info("Storage directory: \"{}\"", config_->storage_location.string());
 
   // enumerate the storage directory and queue uploads:
   std::size_t upload_size = 0;
-  for (auto it = fs::recursive_directory_iterator(config_.storage_location);
+  for (auto it = fs::recursive_directory_iterator(config_->storage_location);
        it != fs::recursive_directory_iterator(); ++it) {
     if (it.depth() != 2 || it->is_directory()) {
       continue;
     }
 
-    std::string entry_path = fs::relative(it->path(), config_.storage_location).string();
+    std::string entry_path = fs::relative(it->path(), config_->storage_location).string();
 #ifdef _WIN32
     std::replace(entry_path.begin(), entry_path.end(), '\\', '/');
 #endif
@@ -191,7 +191,7 @@ tl::expected<void, Error> Storage::Initialize() {
       continue;
     }
 
-    auto transfer = transfer_manager_->UploadFile(it->path().string(), config_.bucket_name,
+    auto transfer = transfer_manager_->UploadFile(it->path().string(), config_->bucket_name,
                                                   KeyFromOid(*oid), "application/octet-stream", {});
     ASSERT(transfer);
     pending_transfers_.insert(std::move(transfer));
@@ -216,7 +216,7 @@ std::optional<std::size_t> Storage::ObjectSize(const std::string& oid) {
   }
 
   // It may not be in the bucket, but we might have it locally:
-  const fs::path local_path = config_.storage_location / DirectoryPrefixFromOid(oid) / oid;
+  const fs::path local_path = config_->storage_location / DirectoryPrefixFromOid(oid) / oid;
   if (fs::exists(local_path)) {
     return fs::file_size(local_path);
   }
@@ -226,7 +226,7 @@ std::optional<std::size_t> Storage::ObjectSize(const std::string& oid) {
 tl::expected<void, Error> Storage::PutObject(const lfs::object_t& obj,
                                              const std::filesystem::path& upload_path) {
   // Construct the path to the object:
-  const fs::path local_dir = config_.storage_location / DirectoryPrefixFromOid(obj.oid);
+  const fs::path local_dir = config_->storage_location / DirectoryPrefixFromOid(obj.oid);
   const fs::path local_path = local_dir / obj.oid;
 
   if (fs::exists(local_path)) {
@@ -252,7 +252,7 @@ tl::expected<void, Error> Storage::PutObject(const lfs::object_t& obj,
 
   // Queue an upload:
   auto transfer =
-      transfer_manager_->UploadFile(local_path.string(), config_.bucket_name, KeyFromOid(obj.oid),
+      transfer_manager_->UploadFile(local_path.string(), config_->bucket_name, KeyFromOid(obj.oid),
                                     "application/octet-stream", {});
 
   spdlog::info("Queuing object upload: oid = {}, size = {}", obj.oid, obj.size);
@@ -305,6 +305,7 @@ class LocalObjectGetter : public ObjectGetter {
 // response. As parts are fetched from S3, we return them to the client.
 class BucketObjectGetter : public ObjectGetter {
  public:
+  // TODO: Determine the chunk size in a more optimal way?
   static constexpr std::size_t ChunkSize = 1024 * 1024;
 
   BucketObjectGetter(lfs::object_t object, fs::path download_path,
@@ -471,7 +472,7 @@ class BucketObjectGetter : public ObjectGetter {
 
 tl::expected<ObjectGetter::shared_ptr, Error> Storage::GetObject(const lfs::object_t& obj) {
   // Check if object exists in local cache already:
-  const fs::path local_dir = config_.storage_location / DirectoryPrefixFromOid(obj.oid);
+  const fs::path local_dir = config_->storage_location / DirectoryPrefixFromOid(obj.oid);
   const fs::path local_path = local_dir / obj.oid;
   if (fs::exists(local_path)) {
     // The file exists in local storage:
@@ -479,7 +480,7 @@ tl::expected<ObjectGetter::shared_ptr, Error> Storage::GetObject(const lfs::obje
     return std::make_shared<LocalObjectGetter>(local_path);
   }
 
-  const fs::space_info space = fs::space(config_.storage_location);
+  const fs::space_info space = fs::space(config_->storage_location);
   if (space.available < obj.size) {
     return tl::unexpected(Error{
         "Insufficient space to transfer file from S3: oid = {}, required = {}, available = {}",
@@ -491,8 +492,7 @@ tl::expected<ObjectGetter::shared_ptr, Error> Storage::GetObject(const lfs::obje
       local_dir / fmt::format("{}.download-{}", obj.oid, GenerateUuidString());
 
   spdlog::info("Serving object from S3: oid = {}, size = {}", obj.oid, obj.size);
-  return std::make_shared<BucketObjectGetter>(obj, download_path,
-                                              std::make_shared<Configuration>(config_), s3_client_);
+  return std::make_shared<BucketObjectGetter>(obj, download_path, config_, s3_client_);
 }
 
 void Storage::TransferStatusUpdatedCallback(

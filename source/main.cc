@@ -35,10 +35,9 @@ int main() {
       return 1;
     }
   } catch (std::exception& e) {
-    // Catch any exceptions from the STL and print them. This is so we don't get the abort
-    // dialog on windows.
+    // Log unhandled exceptions to stdout before throwing.
     spdlog::error("Unhandled error: {}", e.what());
-    return 1;
+    throw;
   }
   return 0;
 }
