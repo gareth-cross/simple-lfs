@@ -1,13 +1,14 @@
 #pragma once
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 
 #include <tl/expected.hpp>
 
 #include "configuration.hpp"
-#include "exception.hpp"
+#include "error_type.hpp"
 #include "structs.hpp"
 
 namespace Aws::S3 {
@@ -33,6 +34,7 @@ class PooledThreadExecutor;
 namespace lfs {
 
 // Represents an active download initiated by `GetObject`.
+// This is abstract to handle two cases: streaming an object from the local cache, or from S3.
 struct ObjectGetter {
  public:
   using shared_ptr = std::shared_ptr<ObjectGetter>;
@@ -51,7 +53,7 @@ struct ObjectGetter {
 // Manage local storage of objects and synchronization w/ bucket.
 struct Storage {
  public:
-  explicit Storage(Configuration config);
+  explicit Storage(std::shared_ptr<const Configuration> config);
 
   // Query all the objects in the bucket to build our initial list. Assuming that succeeds, start
   // the uploader thread.
@@ -65,11 +67,11 @@ struct Storage {
   [[nodiscard]] tl::expected<void, Error> PutObject(const lfs::object_t& obj,
                                                     const std::filesystem::path& upload_path);
 
-  //
+  // Return an abstract object that can read a specific object.
   [[nodiscard]] tl::expected<ObjectGetter::shared_ptr, Error> GetObject(const lfs::object_t& obj);
 
  private:
-  Configuration config_;
+  std::shared_ptr<const Configuration> config_;
 
   std::shared_ptr<Aws::S3::S3Client> s3_client_;
   std::shared_ptr<Aws::Utils::Threading::PooledThreadExecutor> pooled_executor_;

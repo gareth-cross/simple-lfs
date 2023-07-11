@@ -25,28 +25,30 @@ namespace lfs {
 struct Server {
  public:
   // Construct w/ configuration parameters.
-  explicit Server(const Configuration& config);
+  explicit Server(std::shared_ptr<const Configuration> config);
 
   // Run the server. Returns unexpected if we could not start the server.
   [[nodiscard]] tl::expected<void, Error> Run();
 
  private:
-  Configuration config_;
+  std::shared_ptr<const Configuration> config_;
 
+  // HTTP server - we register POST/GET/PUT routes on this object.
   httplib::Server http_server_{};
 
   // Manages uploads and downloads from S3.
   lfs::Storage storage_;
 
-  std::atomic_int64_t num_active_uploads_{0};
-
   // Configure routes on the http server.
   void SetupRoutes();
 
   // Convert exception to HTTP response.
+  // This is called if any code in the HTTP handler unexpectedly throws. We convert the exception
+  // into a 500 "internal error" response.
   void HandleException(const httplib::Request& req, httplib::Response& res, std::exception_ptr ep);
 
-  // Handle a batch POST.
+  // Handle a batch POST. Client uses this method to query the status of multiple (typically ~100)
+  // objects at a time. For each object we check if it exists on the server and reply accordingly.
   void HandleBatchPost(const httplib::Request& req, httplib::Response& res);
 
   // Handle a PUT request to upload a file.

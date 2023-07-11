@@ -35,12 +35,16 @@ struct Configuration {
   // Local temporary storage for uploads.
   std::filesystem::path upload_location;
 
+  // Hostname for the server. Defaults to `localhost`.
+  std::string hostname;
+
   // Network port to serve HTTP request on.
-  int port{80};
+  int port{6000};
 };
 
 // Load configuration TOML file from the specified path.
 // On failure, returns a string message indicating the failure.
-tl::expected<Configuration, std::string> LoadConfig(const std::filesystem::path& path);
+tl::expected<std::shared_ptr<const Configuration>, std::string> LoadConfig(
+    const std::filesystem::path& path);
 
 }  // namespace lfs

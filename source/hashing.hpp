@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include <openssl/evp.h>
 
@@ -29,8 +28,5 @@ struct Hasher {
 
 // Print a hash as a string of hex characters.
 std::string StringFromSha256(const Sha256& sha);
-
-// Print a base-64 encoded hash to string.
-std::string Base64FromSha256(const Sha256& sha);
 
 }  // namespace lfs

@@ -24,6 +24,7 @@ struct Error {
 
 }  // namespace lfs
 
+// Supporting printing of `Error` type directly in fmt::format calls.
 template <>
 struct fmt::formatter<lfs::Error> {
   constexpr auto parse(format_parse_context& ctx) -> format_parse_context::iterator {
