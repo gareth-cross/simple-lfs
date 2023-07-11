@@ -33,31 +33,20 @@ add_executable(
   source/storage.cc)
 
 # Link to dependencies
-add_dependencies(
-  ${PROJECT_NAME}
-  fmt-header-only
-  spdlog_header_only
-  httplib
-  nlohmann_json
-  tomlplusplus::tomlplusplus
-  tl::expected
-  CLI11::CLI11
-  aws-cpp-sdk-s3
-  aws-cpp-sdk-core
-  aws-cpp-sdk-transfer)
 target_link_libraries(
   ${PROJECT_NAME}
-  fmt-header-only
-  spdlog_header_only
-  httplib
-  nlohmann_json
-  tomlplusplus::tomlplusplus
-  tl::expected
-  CLI11::CLI11
-  OpenSSL::Crypto
-  aws-cpp-sdk-s3
   aws-cpp-sdk-core
-  aws-cpp-sdk-transfer)
+  aws-cpp-sdk-s3
+  aws-cpp-sdk-transfer
+  CLI11::CLI11
+  fmt::fmt-header-only
+  httplib::httplib
+  nlohmann_json::nlohmann_json
+  OpenSSL::Crypto
+  scope_guard
+  spdlog::spdlog_header_only
+  tl::expected
+  tomlplusplus::tomlplusplus)
 
 if(WIN32)
   # for UUID functionality on windows:
@@ -80,6 +69,3 @@ else()
   target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic
                                                  -Werror -Wno-sign-compare)
 endif()
-
-target_include_directories(
-  ${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/dependencies/scope_guard")
