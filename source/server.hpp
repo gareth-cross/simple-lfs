@@ -30,6 +30,9 @@ struct Server {
   // Run the server. Returns unexpected if we could not start the server.
   [[nodiscard]] tl::expected<void, Error> Run();
 
+  // Stop the server (called from interrupt handler).
+  void Stop();
+
  private:
   std::shared_ptr<const Configuration> config_;
 

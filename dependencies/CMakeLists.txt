@@ -69,6 +69,9 @@ function(add_aws)
   set(BUILD_ONLY
       "s3;core;transfer"
       CACHE STRING "" FORCE)
+  set(BUILD_TESTING
+      OFF
+      CACHE BOOL "" FORCE)
   add_subdirectory(aws-sdk-cpp)
   if(MSVC)
     target_compile_options(aws-cpp-sdk-core PRIVATE /wd4267)
