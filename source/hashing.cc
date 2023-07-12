@@ -1,12 +1,10 @@
 #include "hashing.hpp"
 
-#include <openssl/evp.h>
-
 #include "assertions.hpp"
 
 namespace lfs {
 
-Hasher::Hasher() : context_(EVP_MD_CTX_new(), &EVP_MD_CTX_free) {
+Hasher::Hasher() {
   ASSERT(context_, "Failed to create EVP context.");
 
   const int init_result = EVP_DigestInit_ex(context_.get(), EVP_sha256(), nullptr);

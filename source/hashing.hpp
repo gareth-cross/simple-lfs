@@ -23,7 +23,7 @@ struct Hasher {
   Sha256 GetHash() const;
 
  private:
-  std::unique_ptr<EVP_MD_CTX, void (*)(EVP_MD_CTX*)> context_;
+  std::unique_ptr<EVP_MD_CTX, void (*)(EVP_MD_CTX*)> context_{EVP_MD_CTX_new(), &EVP_MD_CTX_free};
 };
 
 // Print a hash as a string of hex characters.

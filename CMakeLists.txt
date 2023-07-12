@@ -6,15 +6,6 @@ project(
   LANGUAGES CXX C)
 set(CMAKE_COLOR_MAKEFILE ON)
 
-# Detect windows, and set the architecture.
-option(OVERRIDE_ARCH_ON_WIN32 "Automatically set x64 on windows platform." ON)
-if(MSVC AND ${OVERRIDE_ARCH_ON_WIN32})
-  message(STATUS "Changing architecture because we are on windows.")
-  set(CMAKE_GENERATOR_PLATFORM
-      "x64"
-      CACHE STRING "" FORCE)
-endif()
-
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
