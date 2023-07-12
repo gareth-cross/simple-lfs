@@ -48,7 +48,8 @@ struct Server {
   // Convert exception to HTTP response.
   // This is called if any code in the HTTP handler unexpectedly throws. We convert the exception
   // into a 500 "internal error" response.
-  void HandleException(const httplib::Request& req, httplib::Response& res, std::exception_ptr ep);
+  void HandleException(const httplib::Request& req, httplib::Response& res,
+                       std::exception_ptr ep) const;
 
   // Handle a batch POST. Client uses this method to query the status of multiple (typically ~100)
   // objects at a time. For each object we check if it exists on the server and reply accordingly.

@@ -79,7 +79,7 @@ void Server::SetupRoutes() {
 }
 
 void Server::HandleException(const httplib::Request& req, httplib::Response& res,
-                             std::exception_ptr ep) {
+                             std::exception_ptr ep) const {
   res.status = 500;
   std::string response{};
   try {
@@ -91,7 +91,7 @@ void Server::HandleException(const httplib::Request& req, httplib::Response& res
   } catch (...) {
     spdlog::error("Unknown exception thrown during request handling. Request = {} {}", req.method,
                   req.path);
-    response = EncodeResponse(lfs::error_response_t{"Internal error"});
+    throw;
   }
   res.set_content(response, std::string(lfs::mime_type_json));
 }
@@ -158,8 +158,8 @@ void Server::HandleObjectPut(const httplib::Request& req, httplib::Response& res
     }
   });
 
-  const fs::space_info space = fs::space(config_->upload_location);
-  if (space.available < obj.size) {
+  if (const fs::space_info space = fs::space(config_->upload_location);
+      space.available < obj.size) {
     FillWithError(res, lfs::error_code::internal_error,
                   "Insufficient space to receive file: oid = {}, required = {}, available = {}",
                   obj.oid, obj.size, space.available);
@@ -201,8 +201,8 @@ void Server::HandleObjectPut(const httplib::Request& req, httplib::Response& res
   lfs::Sha256 final_hash = hasher.GetHash();
 
   // Check the hash:
-  const std::string final_hash_string = lfs::StringFromSha256(final_hash);
-  if (final_hash_string != obj.oid) {
+  if (const std::string final_hash_string = lfs::StringFromSha256(final_hash);
+      final_hash_string != obj.oid) {
     FillWithError(res, lfs::error_code::validation_error,
                   "Object hash does not match. expected = {}, actual = {}", obj.oid,
                   final_hash_string);
@@ -319,17 +319,3 @@ void Server::FillWithError(httplib::Response& res, const Error& error) const {
 }
 
 }  // namespace lfs
-
-template <>
-struct fmt::formatter<Aws::Transfer::TransferStatus> {
-  constexpr auto parse(format_parse_context& ctx) -> format_parse_context::iterator {
-    return ctx.begin();
-  }
-
-  auto format(const Aws::Transfer::TransferStatus& status, format_context& ctx) const
-      -> format_context::iterator {
-    std::stringstream stream;
-    stream << status;
-    return fmt::format_to(ctx.out(), "{}", stream.str());
-  }
-};

@@ -1,6 +1,7 @@
 #include "configuration.hpp"
 
 #include <fmt/core.h>
+#include <fmt/ostream.h>
 
 #define TOML_EXCEPTIONS 0
 #include <toml++/toml.h>
@@ -41,9 +42,7 @@ tl::expected<std::shared_ptr<const Configuration>, std::string> LoadConfig(
   config.bucket_name = bucket_name.value();
 
   // Bucket region can be left at the default value:
-  if (auto bucket_region = table["bucket_region"].value<std::string>(); bucket_region) {
-    config.bucket_region = bucket_region.value();
-  }
+  config.bucket_region = table["bucket_region"].value<std::string>().value_or("");
 
   // endpoint is optional, we don't need to assign a default here:
   config.endpoint = table["endpoint"].value<std::string>();
@@ -61,11 +60,7 @@ tl::expected<std::shared_ptr<const Configuration>, std::string> LoadConfig(
     config.upload_location = fs::temp_directory_path() / "lfs";
   }
 
-  if (auto hostname = table["hostname"].value<std::string>(); hostname) {
-    config.hostname = std::move(hostname.value());
-  } else {
-    config.hostname = "localhost";
-  }
+  config.hostname = table["hostname"].value<std::string>().value_or("localhost");
 
   if (auto port = table["port"].value<int>(); port) {
     config.port = port.value();
@@ -82,14 +77,4 @@ tl::expected<std::shared_ptr<const Configuration>, std::string> LoadConfig(
 }  // namespace lfs
 
 template <>
-struct fmt::formatter<toml::parse_error> {
-  constexpr auto parse(format_parse_context& ctx) -> format_parse_context::iterator {
-    return ctx.begin();
-  }
-
-  auto format(const toml::parse_error& err, format_context& ctx) const -> format_context::iterator {
-    std::stringstream stream;
-    stream << err;
-    return fmt::format_to(ctx.out(), "{}", stream.str());
-  }
-};
+struct fmt::formatter<toml::parse_error> : fmt::ostream_formatter {};

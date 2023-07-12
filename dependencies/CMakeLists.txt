@@ -78,3 +78,7 @@ function(add_aws)
   endif()
 endfunction()
 add_aws()
+
+# Add scope_guard target
+add_library(scope_guard INTERFACE)
+target_include_directories(scope_guard INTERFACE scope_guard)

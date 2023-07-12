@@ -158,9 +158,8 @@ tl::expected<void, Error> Storage::Initialize() {
     request.WithMarker(contents.back().GetKey());
   }
 
-  std::error_code ec{};
-  if (!fs::exists(config_->storage_location) &&
-      !fs::create_directories(config_->storage_location, ec)) {
+  if (std::error_code ec{}; !fs::exists(config_->storage_location) &&
+                            !fs::create_directories(config_->storage_location, ec)) {
     return tl::unexpected<Error>("Failed while creating path \"{}\": {}",
                                  config_->storage_location.string(), ec.message());
   }
@@ -208,7 +207,7 @@ tl::expected<void, Error> Storage::Initialize() {
 std::optional<std::size_t> Storage::ObjectSize(const std::string& oid) {
   // Lock to check the bucket first:
   {
-    std::lock_guard lock{mutex_};
+    std::scoped_lock lock{mutex_};
     auto it = s3_objects_.find(oid);
     if (it != s3_objects_.end()) {
       return it->second;
@@ -216,8 +215,8 @@ std::optional<std::size_t> Storage::ObjectSize(const std::string& oid) {
   }
 
   // It may not be in the bucket, but we might have it locally:
-  const fs::path local_path = config_->storage_location / DirectoryPrefixFromOid(oid) / oid;
-  if (fs::exists(local_path)) {
+  if (const fs::path local_path = config_->storage_location / DirectoryPrefixFromOid(oid) / oid;
+      fs::exists(local_path)) {
     return fs::file_size(local_path);
   }
   return std::nullopt;
@@ -257,7 +256,7 @@ tl::expected<void, Error> Storage::PutObject(const lfs::object_t& obj,
 
   spdlog::info("Queuing object upload: oid = {}, size = {}", obj.oid, obj.size);
 
-  std::lock_guard<std::mutex> lock{mutex_};
+  std::scoped_lock lock{mutex_};
   pending_transfers_.emplace(std::move(transfer));
   return {};
 }
@@ -320,8 +319,7 @@ class BucketObjectGetter : public ObjectGetter {
                                         char* data) override {
     if (!stream_.is_open()) {
       const auto parent = download_path_.parent_path();
-      std::error_code ec{};
-      if (!fs::exists(parent) && !fs::create_directories(parent, ec)) {
+      if (std::error_code ec{}; !fs::exists(parent) && !fs::create_directories(parent, ec)) {
         return tl::unexpected<Error>(R"(Failed to create directory: "{}", reason = "{}")",
                                      parent.string(), ec.message());
       }
@@ -473,15 +471,14 @@ class BucketObjectGetter : public ObjectGetter {
 tl::expected<ObjectGetter::shared_ptr, Error> Storage::GetObject(const lfs::object_t& obj) {
   // Check if object exists in local cache already:
   const fs::path local_dir = config_->storage_location / DirectoryPrefixFromOid(obj.oid);
-  const fs::path local_path = local_dir / obj.oid;
-  if (fs::exists(local_path)) {
+  if (const fs::path local_path = local_dir / obj.oid; fs::exists(local_path)) {
     // The file exists in local storage:
     spdlog::info("Serving object from local storage: oid = {}, size = {}", obj.oid, obj.size);
     return std::make_shared<LocalObjectGetter>(local_path);
   }
 
-  const fs::space_info space = fs::space(config_->storage_location);
-  if (space.available < obj.size) {
+  if (const fs::space_info space = fs::space(config_->storage_location);
+      space.available < obj.size) {
     return tl::unexpected(Error{
         "Insufficient space to transfer file from S3: oid = {}, required = {}, available = {}",
         obj.oid, obj.size, space.available});
@@ -499,7 +496,7 @@ void Storage::OnExit() {
   const std::size_t num_pending = std::invoke([this] {
     // Scoped lock to get the # of pending transfers.
     // Avoid any recursive locking that might be triggered by cancellation.
-    std::lock_guard lock{mutex_};
+    std::scoped_lock lock{mutex_};
     return pending_transfers_.size();
   });
   if (num_pending == 0) {
@@ -532,12 +529,12 @@ void Storage::HandleTransferEnd(
   const auto size = handle->GetBytesTotalSize();
 
   // Lock before modifying shared state:
-  std::lock_guard<std::mutex> lock{mutex_};
+  std::scoped_lock lock{mutex_};
   pending_transfers_.erase(handle);
 
   if (handle->GetStatus() == Transfer::TransferStatus::COMPLETED) {
     // Update internal map:
-    s3_objects_.emplace(oid, size);
+    s3_objects_.try_emplace(oid, size);
     spdlog::info("Completed object upload: oid = {}, size = {}", oid, size);
   } else if (handle->GetStatus() == Transfer::TransferStatus::CANCELED) {
     // Cancelled, maybe because we are shutting down.
@@ -555,7 +552,7 @@ void Storage::HandleTransferEnd(
 // Pretty-printing for disk sizes.
 template <>
 struct fmt::formatter<lfs::SizePrinter> {
-  constexpr auto parse(format_parse_context& ctx) -> format_parse_context::iterator {
+  constexpr auto parse(const format_parse_context& ctx) const -> format_parse_context::iterator {
     return ctx.begin();
   }
 
